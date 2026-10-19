@@ -1,0 +1,24 @@
+<?g3d version="1.0.0" encoding="utf-8" validationSchemaFile="https://github.com/ghxsthmodder/g3d/blob/main/model.g3d.sch"?>
+<model>
+	<data>
+		<author>eliel lima silva</author>
+		<createdAt>19-10-2026-17-41</createdAt>
+		<exportProgram>
+			<name>S3D Exporter Plugin</name>
+			<version>1.0.0</version>
+		</exportProgram>
+		<license file="LICENSE.txt"/>
+	</data>
+	<assets><!-- attrs: externalFile="" --> 
+		<asset id="1" type="texture" file="default_albedo.png" relativePath="true"/>
+		<asset id="2" type="texture" file="default_normal.png" relativePath="true"/>
+		<asset id="3" type="texture" file="default_roughtness.png" relativePath="true"/>
+		<asset id="4" type="shader" file="C:/Users/Eliel/Documensts/SouthEngine/Shaders/SampleDDSArrayTexture.glsl"/>
+	</assets>
+	<animations><!-- attrs: externalFile="" --> 
+		<animation name="default_animation" speed="0.0"/>
+	</animations>
+	<collisions><!-- attrs: externalFile="" --> 
+	<materials/><!-- attrs: externalFile="" --> 
+	<mesh/><!-- attrs: externalFile="" --> 
+</model>
