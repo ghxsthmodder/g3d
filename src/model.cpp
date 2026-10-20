@@ -112,9 +112,13 @@ Document parse(std::string_view xml, std::filesystem::path source_path) {
     Document doc;
     doc.source_path = std::move(source_path);
     std::vector<std::pair<std::string, std::size_t>> stack;
-    std::set<std::string> asset_ids;
-    std::vector<std::pair<std::string, std::size_t>> references;
-    bool root_seen = false, root_closed = false;
+    std::set<std::string> asset_ids, geometry_ids, primitive_ids, material_ids, node_ids;
+    struct Reference { std::string id; std::string kind; std::size_t line; };
+    std::vector<Reference> references;
+    std::set<std::string> sections;
+    const std::vector<std::string> section_order = {"metadata","assets","mesh","materials","animations","collisions","scene"};
+    int last_section = -1;
+    bool root_seen = false, root_closed = false, scene_seen = false;
     std::size_t line = 1, i = 0;
 
     while (i < xml.size()) {
@@ -146,7 +150,8 @@ Document parse(std::string_view xml, std::filesystem::path source_path) {
             const auto end = xml.find("?>", i + 2);
             if (end == std::string_view::npos) { diagnostic(doc, line, "unterminated processing instruction"); break; }
             auto pi = xml.substr(i + 2, end - i - 2);
-            if (pi.starts_with("g3d") && (pi.size() == 3 || std::isspace(static_cast<unsigned char>(pi[3])))) {
+            if (!pi.starts_with("xml") || (pi.size() > 3 && !std::isspace(static_cast<unsigned char>(pi[3])))) {
+                diagnostic(doc, line, "processing instructions are not supported in G3D v1.0");
                 const auto v = pi.find("version=");
                 if (v != std::string_view::npos) {
                     auto q = pi.find_first_of("\"'", v + 8);
@@ -186,33 +191,87 @@ Document parse(std::string_view xml, std::filesystem::path source_path) {
             } else stack.pop_back();
             if (stack.empty() && root_seen) root_closed = true;
         } else {
+            const bool is_root = !root_seen;
             if (!root_seen) {
                 root_seen = true;
-                if (tag.name != "model") diagnostic(doc, line, "root element must be <model>");
+                if (tag.name != "g3d") diagnostic(doc, line, "root element must be <g3d>");
+                auto v = tag.attrs.find("version");
+                if (v == tag.attrs.end() || v->second.empty()) diagnostic(doc, line, "<g3d> requires version=\"1.0\"");
+                else if (v->second != "1.0") diagnostic(doc, line, "unsupported G3D version: " + v->second);
+                else doc.version = v->second;
             } else if (root_closed || stack.empty()) {
                 diagnostic(doc, line, "multiple root elements");
+            }
+            if (!is_root && stack.size() == 1) {
+                auto section = std::find(section_order.begin(), section_order.end(), tag.name);
+                if (section == section_order.end()) diagnostic(doc, line, "unknown top-level section: " + tag.name);
+                else {
+                    int index = static_cast<int>(section - section_order.begin());
+                    if (!sections.insert(tag.name).second) diagnostic(doc, line, "duplicate top-level section: " + tag.name);
+                    if (index < last_section) diagnostic(doc, line, "top-level sections are out of order");
+                    last_section = std::max(last_section, index);
+                    if (tag.name == "scene") scene_seen = true;
+                }
             }
             if (tag.name == "asset") {
                 const auto id = tag.attrs.find("id");
                 const auto type = tag.attrs.find("type");
+                const auto src = tag.attrs.find("src");
                 if (id == tag.attrs.end() || id->second.empty()) diagnostic(doc, line, "<asset> requires a non-empty id");
                 else if (!asset_ids.insert(id->second).second) diagnostic(doc, line, "duplicate asset id: " + id->second);
-                if (type == tag.attrs.end() || type->second.empty()) diagnostic(doc, line, "<asset> requires a type");
+                if (type == tag.attrs.end() || type->second != "texture") diagnostic(doc, line, "<asset> type must be texture in v1.0");
+                if (src == tag.attrs.end() || src->second.empty()) diagnostic(doc, line, "<asset> requires src");
                 Asset asset;
                 if (id != tag.attrs.end()) asset.id = id->second;
                 if (type != tag.attrs.end()) asset.type = type->second;
-                if (auto f = tag.attrs.find("file"); f != tag.attrs.end()) asset.file = f->second;
+                if (src != tag.attrs.end()) asset.file = src->second;
                 if (auto rp = tag.attrs.find("relativePath"); rp != tag.attrs.end())
                     asset.relative_path = rp->second != "false" && rp->second != "0";
                 doc.assets.push_back(std::move(asset));
             }
             if (tag.name == "mesh" || tag.name == "animations" || tag.name == "collisions" ||
                 tag.name == "materials" || tag.name == "assets") {
-                if (auto ext = tag.attrs.find("externalFile"); ext != tag.attrs.end())
-                    doc.external_files.push_back(ext->second);
+                if (auto ext = tag.attrs.find("src"); ext != tag.attrs.end()) doc.external_files.push_back(ext->second);
+            }
+            if (tag.name == "geometry") {
+                auto id = tag.attrs.find("id");
+                if (id == tag.attrs.end() || id->second.empty()) diagnostic(doc, line, "<geometry> requires id");
+                else if (!geometry_ids.insert(id->second).second) diagnostic(doc, line, "duplicate geometry id: " + id->second);
+            }
+            if (tag.name == "primitive") {
+                auto id = tag.attrs.find("id");
+                if (id == tag.attrs.end() || id->second.empty()) diagnostic(doc, line, "<primitive> requires id");
+                else if (!primitive_ids.insert(id->second).second) diagnostic(doc, line, "duplicate primitive id: " + id->second);
+                auto g = tag.attrs.find("geometry"), m = tag.attrs.find("material");
+                if (g == tag.attrs.end()) diagnostic(doc, line, "<primitive> requires geometry");
+                else references.push_back({g->second, "geometry", line});
+                if (m == tag.attrs.end()) diagnostic(doc, line, "<primitive> requires material");
+                else references.push_back({m->second, "material", line});
+            }
+            if (tag.name == "material") {
+                auto id = tag.attrs.find("id");
+                if (id == tag.attrs.end() || id->second.empty()) diagnostic(doc, line, "<material> requires id");
+                else if (!material_ids.insert(id->second).second) diagnostic(doc, line, "duplicate material id: " + id->second);
+            }
+            if (tag.name == "node") {
+                auto id = tag.attrs.find("id");
+                if (id == tag.attrs.end() || id->second.empty()) diagnostic(doc, line, "<node> requires id");
+                else if (!node_ids.insert(id->second).second) diagnostic(doc, line, "duplicate node id: " + id->second);
+            }
+            if (tag.name == "mesh") {
+                auto ref = tag.attrs.find("ref");
+                if (ref != tag.attrs.end()) references.push_back({ref->second, "primitive", line});
+            }
+            if (tag.name == "channel") {
+                auto ref = tag.attrs.find("target");
+                if (ref != tag.attrs.end()) references.push_back({ref->second, "node", line});
+            }
+            if (tag.name == "body") {
+                auto ref = tag.attrs.find("node");
+                if (ref != tag.attrs.end()) references.push_back({ref->second, "node", line});
             }
             if (auto ref = tag.attrs.find("assetId"); ref != tag.attrs.end())
-                references.emplace_back(ref->second, line);
+                references.push_back({ref->second, "asset", line});
             if (!tag.self_closing) stack.emplace_back(tag.name, line);
             else if (stack.empty() && root_seen) root_closed = true;
         }
@@ -222,10 +281,16 @@ Document parse(std::string_view xml, std::filesystem::path source_path) {
 
     if (!root_seen) diagnostic(doc, 1, "document has no root element");
     if (!stack.empty()) diagnostic(doc, stack.back().second, "unclosed tag: " + stack.back().first);
-    for (const auto& [id, ref_line] : references)
-        if (!asset_ids.contains(id)) diagnostic(doc, ref_line, "reference points to unknown asset id: " + id);
-    if (doc.version.empty())
-        diagnostic(doc, 1, "missing G3D processing instruction version", Diagnostic::Severity::warning);
+    if (!scene_seen) diagnostic(doc, 1, "required <scene> section is missing");
+    for (const auto& ref : references) {
+        bool found = false;
+        if (ref.kind == "asset") found = asset_ids.contains(ref.id);
+        else if (ref.kind == "geometry") found = geometry_ids.contains(ref.id);
+        else if (ref.kind == "material") found = material_ids.contains(ref.id);
+        else if (ref.kind == "primitive") found = primitive_ids.contains(ref.id);
+        else if (ref.kind == "node") found = node_ids.contains(ref.id);
+        if (!found) diagnostic(doc, ref.line, "reference points to unknown " + ref.kind + " id: " + ref.id);
+    }
     return doc;
 }
 
