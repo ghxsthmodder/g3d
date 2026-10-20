@@ -112,8 +112,12 @@ Document parse(std::string_view xml, std::filesystem::path source_path) {
     Document doc;
     doc.source_path = std::move(source_path);
     std::vector<std::pair<std::string, std::size_t>> stack;
-    std::set<std::string> asset_ids;
-    std::vector<std::pair<std::string, std::size_t>> references;
+    std::set<std::string> asset_ids, geometry_ids, primitive_ids, material_ids, node_ids;
+    struct Reference { std::string id; std::string kind; std::size_t line; };
+    std::vector<Reference> references;
+    std::set<std::string> sections;
+    const std::vector<std::string> section_order = {"metadata","assets","mesh","materials","animations","collisions","scene"};
+    int last_section = -1;
     bool root_seen = false, root_closed = false, scene_seen = false;
     std::size_t line = 1, i = 0;
 
@@ -199,10 +203,15 @@ Document parse(std::string_view xml, std::filesystem::path source_path) {
                 diagnostic(doc, line, "multiple root elements");
             }
             if (!is_root && stack.size() == 1) {
-                if (tag.name == "scene") scene_seen = true;
-                const std::vector<std::string> allowed = {"metadata","assets","mesh","materials","animations","collisions","scene"};
-                if (std::find(allowed.begin(), allowed.end(), tag.name) == allowed.end())
-                    diagnostic(doc, line, "unknown top-level section: " + tag.name);
+                auto section = std::find(section_order.begin(), section_order.end(), tag.name);
+                if (section == section_order.end()) diagnostic(doc, line, "unknown top-level section: " + tag.name);
+                else {
+                    int index = static_cast<int>(section - section_order.begin());
+                    if (!sections.insert(tag.name).second) diagnostic(doc, line, "duplicate top-level section: " + tag.name);
+                    if (index < last_section) diagnostic(doc, line, "top-level sections are out of order");
+                    last_section = std::max(last_section, index);
+                    if (tag.name == "scene") scene_seen = true;
+                }
             }
             if (tag.name == "asset") {
                 const auto id = tag.attrs.find("id");
@@ -224,8 +233,45 @@ Document parse(std::string_view xml, std::filesystem::path source_path) {
                 tag.name == "materials" || tag.name == "assets") {
                 if (auto ext = tag.attrs.find("src"); ext != tag.attrs.end()) doc.external_files.push_back(ext->second);
             }
+            if (tag.name == "geometry") {
+                auto id = tag.attrs.find("id");
+                if (id == tag.attrs.end() || id->second.empty()) diagnostic(doc, line, "<geometry> requires id");
+                else if (!geometry_ids.insert(id->second).second) diagnostic(doc, line, "duplicate geometry id: " + id->second);
+            }
+            if (tag.name == "primitive") {
+                auto id = tag.attrs.find("id");
+                if (id == tag.attrs.end() || id->second.empty()) diagnostic(doc, line, "<primitive> requires id");
+                else if (!primitive_ids.insert(id->second).second) diagnostic(doc, line, "duplicate primitive id: " + id->second);
+                auto g = tag.attrs.find("geometry"), m = tag.attrs.find("material");
+                if (g == tag.attrs.end()) diagnostic(doc, line, "<primitive> requires geometry");
+                else references.push_back({g->second, "geometry", line});
+                if (m == tag.attrs.end()) diagnostic(doc, line, "<primitive> requires material");
+                else references.push_back({m->second, "material", line});
+            }
+            if (tag.name == "material") {
+                auto id = tag.attrs.find("id");
+                if (id == tag.attrs.end() || id->second.empty()) diagnostic(doc, line, "<material> requires id");
+                else if (!material_ids.insert(id->second).second) diagnostic(doc, line, "duplicate material id: " + id->second);
+            }
+            if (tag.name == "node") {
+                auto id = tag.attrs.find("id");
+                if (id == tag.attrs.end() || id->second.empty()) diagnostic(doc, line, "<node> requires id");
+                else if (!node_ids.insert(id->second).second) diagnostic(doc, line, "duplicate node id: " + id->second);
+            }
+            if (tag.name == "mesh") {
+                auto ref = tag.attrs.find("ref");
+                if (ref != tag.attrs.end()) references.push_back({ref->second, "primitive", line});
+            }
+            if (tag.name == "channel") {
+                auto ref = tag.attrs.find("target");
+                if (ref != tag.attrs.end()) references.push_back({ref->second, "node", line});
+            }
+            if (tag.name == "body") {
+                auto ref = tag.attrs.find("node");
+                if (ref != tag.attrs.end()) references.push_back({ref->second, "node", line});
+            }
             if (auto ref = tag.attrs.find("assetId"); ref != tag.attrs.end())
-                references.emplace_back(ref->second, line);
+                references.push_back({ref->second, "asset", line});
             if (!tag.self_closing) stack.emplace_back(tag.name, line);
             else if (stack.empty() && root_seen) root_closed = true;
         }
@@ -236,8 +282,15 @@ Document parse(std::string_view xml, std::filesystem::path source_path) {
     if (!root_seen) diagnostic(doc, 1, "document has no root element");
     if (!stack.empty()) diagnostic(doc, stack.back().second, "unclosed tag: " + stack.back().first);
     if (!scene_seen) diagnostic(doc, 1, "required <scene> section is missing");
-    for (const auto& [id, ref_line] : references)
-        if (!asset_ids.contains(id)) diagnostic(doc, ref_line, "reference points to unknown asset id: " + id);
+    for (const auto& ref : references) {
+        bool found = false;
+        if (ref.kind == "asset") found = asset_ids.contains(ref.id);
+        else if (ref.kind == "geometry") found = geometry_ids.contains(ref.id);
+        else if (ref.kind == "material") found = material_ids.contains(ref.id);
+        else if (ref.kind == "primitive") found = primitive_ids.contains(ref.id);
+        else if (ref.kind == "node") found = node_ids.contains(ref.id);
+        if (!found) diagnostic(doc, ref.line, "reference points to unknown " + ref.kind + " id: " + ref.id);
+    }
     return doc;
 }
 
