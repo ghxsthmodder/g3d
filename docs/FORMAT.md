@@ -221,6 +221,18 @@ only in an unpacked authoring document, and a packer **must** convert rather tha
 them — the alternative is a format whose published form has two loading paths, one of
 which the GPU cannot sample.
 
+That makes `type` redundant in v1.0, deliberately. `<assets>` is the set of
+externally-loaded files addressed by ID, and a texture is the only such file the core
+grammar has: geometry lives in `<mesh>` and the pool, materials in `<materials>`, metadata
+in `<metadata>`. The attribute exists so that a later revision can add a second category —
+a compiled shader, an audio clip — inside `<assets>` instead of inventing a parallel
+element for it. The shape such an addition **must** take is a reference, not content: an
+asset whose `src` names a file the reader hands to the engine. A `.g3d` carrying shader
+*source* turns every loader into a compiler and every package into a code-delivery
+channel, which contradicts what rules 2 and 3 of §8.3 exist to prevent and defeats the
+security imperatives of §18. Terrain splatmapping is the case most likely to need this,
+and §12 states what the format can already express without it.
+
 ### 8.2 Single source of truth
 
 The KTX2 header is authoritative for `pixelWidth`, `pixelHeight`, `pixelDepth`,
@@ -230,7 +242,18 @@ errors, not overrides. A reader **must not** prefer an XML value that contradict
 container.
 
 What the container genuinely cannot know stays in XML — the slot's role, the device
-profile it is intended for, the image *kind* (`2d`, `cube`, `2dArray`).
+profile it is intended for, and the image *kind*, declared on the `<asset>`:
+
+```xml
+<asset id="emissive_array_astc" type="texture" src="textures/emissive_array_astc.ktx2" kind="2dArray"/>
+```
+
+`kind` ∈ {`2d` (default), `cube`, `2dArray`} and is the only statement the XML makes
+about image topology. It is an assertion checked against the container, never an
+override: rule 5 below rejects a `kind` the header does not support. Omitting it means
+`2d`, which is the common case and keeps an authoring file one attribute shorter. The
+*number* of layers is not declared here for the same reason the width is not —
+`layerCount` is in the header, and two sources for one number drift.
 
 ### 8.3 Payload rules
 
@@ -245,7 +268,12 @@ For every `.ktx2` a conforming validator must check, in order:
    are physically present;
 5. `faceCount` / `layerCount` / `pixelDepth` agree with the declared `kind`;
 6. all members of one `<textureSet>` share dimensions, layers, faces and levels and
-   differ **only** in `vkFormat`. Disagreement is an error, never a silent override.
+   differ **only** in `vkFormat`. Disagreement is an error, never a silent override;
+7. a `<texture layer>` requires `kind="2dArray"` and `layer < layerCount`, taken from the
+   header. A `layer` on a `2d` or `cube` image is an error. Ignoring it silently renders
+   the wrong slice, which reads to whoever sees it as an art bug rather than a format bug.
+   Rule 6 already forces every variant's header to be read and their `layerCount`s
+   compared, so this is a bound check against that agreed value, not extra I/O.
 
 Rules 2 and 3 exist because of the target. Basis Universal exists to be transcoded at
 load; ETC1S and Zstd supercompression exist to be inflated at load. Both turn "upload
@@ -458,7 +486,7 @@ drafts, which is why "morph unsupported" once covered both.
     <metallic value="0"/><roughness value="0.6"/>
     <occlusion strength="0.8"><texture assetId="orm_set" texCoord="1" channel="r"/></occlusion>
     <normal scale="1"><texture assetId="normal_set" texCoord="0" colorspace="linear"/></normal>
-    <emissive r="0" g="0" b="0" strength="1"><texture assetId="emissive_set" texCoord="0" colorspace="srgb"/></emissive>
+    <emissive r="0" g="0" b="0" strength="1"><texture assetId="emissive_set" texCoord="0" layer="1" colorspace="srgb"/></emissive>
   </pbr>
 </material>
 ```
@@ -475,10 +503,51 @@ concern and is not specified — the format's promise is that `alpha` means what
 values say, not that it composites in a defined order.
 
 `<texture>` attributes: `assetId` → asset or textureSet, `texCoord` → UV set index,
-`colorspace` = `srgb | linear`, and channel selection `channel`, `channelG`, `channelB`
-(`channelA` also). The packing convention is **ORM**: R = occlusion, G = roughness,
-B = metallic, A = unused — identical to glTF, so an existing toolchain interoperates
-without a converter, and `channel*=` exists for engines that want a different layout.
+`layer` → slice of a `2dArray` image, `colorspace` = `srgb | linear`, and channel
+selection `channel`, `channelG`, `channelB` (`channelA` also). The packing convention is
+**ORM**: R = occlusion, G = roughness, B = metallic, A = unused — identical to glTF, so
+an existing toolchain interoperates without a converter, and `channel*=` exists for
+engines that want a different layout.
+
+**Atlas arrays.** `layer` samples one slice of a `kind="2dArray"` image, so a family of
+related surfaces becomes one allocation, one sampler binding, one mip chain, and a
+choice of appearance reduced to a non-negative integer. In `samples/v1/character.g3d` the
+emissive detail is drawn from an array shared across a character set:
+
+```xml
+<assets>
+  <textureSet id="emissive_set">
+    <image assetId="emissive_array_astc" vkFormat="VK_FORMAT_ASTC_4x4_SRGB_BLOCK" when="formatSupported(ASTC_4x4_SRGB)" prefer="30"/>
+    <image assetId="emissive_array_rgba" vkFormat="VK_FORMAT_R8G8B8A8_SRGB"       when="*" default="true"/>
+  </textureSet>
+  <asset id="emissive_array_astc" type="texture" src="textures/emissive_array_astc.ktx2" kind="2dArray"/>
+  <asset id="emissive_array_rgba" type="texture" src="textures/emissive_array_rgba.ktx2" kind="2dArray"/>
+</assets>
+<!-- in the same document's <material id="skin_mat">, the slot that reads it: -->
+<emissive r="0" g="0" b="0" strength="1">
+  <texture assetId="emissive_set" texCoord="0" layer="1" colorspace="srgb"/>
+</emissive>
+```
+
+No shader is involved, and that is the point: the standard pipeline already samples
+`vec3(uv, float(layer))`, so the format states the index and nothing else. Which layer a
+given model uses is a **content** decision and stays in the game manifest — the
+application's own file, which names a `@id` or `@name` and rebinds it. G3D's obligation
+is to make the layer addressable, its bounds checkable, and `<material>@id`/`@name`
+stable enough for that rebinding to survive a re-export. This is also why `@when` in §8.4
+speaks only of device capability and never of content: capability selection and content
+selection are different axes, and giving them one syntax would make a per-device package
+look like a per-art-variant package.
+
+Terrain splatmapping is the honest hard case. A control texture plus N detail layers is
+not an index but a *blend*, and the format has no words for the combining function. What
+it can express today is the data half — control texture and detail arrays as assets,
+`layer` naming each slice, weights as an ordinary channel-selected texture. The remaining
+half is exactly the scenario §8.1 reserves a future `type` value for: a shader
+**reference** the reader resolves against the engine's own program store, declared in
+`extensionsRequired` (§3) so a reader that cannot honour it fails loudly instead of
+substituting a flat default look. That reference is not defined in v1.0; nothing here
+prevents defining it later without touching the grammar that exists now.
 
 `<transform scale offset rotation>` on a slot is a UV transform. It is **not** the
 `<transform>` of §6: same element name, different meaning, different attributes,
@@ -677,7 +746,7 @@ of this:
 - pool semantics: existence and size of `pool/@src`, offsets, containment, alignment,
   `byteStride` divisibility, `componentType` domain, view resolution;
 - KTX2: file existence, header rules of §8.3, variant-set cross-checks, `colorspace`
-  vs `vkFormat`;
+  vs `vkFormat`, `kind` agreement and `layer` bounds against `layerCount`;
 - reference categories it does not model yet: `buffer`, `bufferView`, `skeleton`,
   `skin`, `camera`, `light`, `sampler`, `animation`, morph `target`;
 - structure: scene-root cardinality, node depth, joint graph shape and cycle-freedom,
@@ -701,6 +770,13 @@ canonical sample cannot mistake a structural pass for semantic conformance.
 4. Basis Universal and supercompression (§8.3) stay prohibited until a target device
    population makes transcoding cheaper than variant shipping — that is a measurement,
    not a decision anyone in this repository has made.
+5. A shader **reference** (§8.1, §12) as `extensionsRequired` content: needed by terrain
+   splatmapping, deferred by everything else. Before it can be drafted, two questions
+   have answers the repository does not yet have — whether the reference names one
+   program per API (GLES GLSL and Vulkan SPIR-V are not interchangeable on the Android
+   target) or one program with per-API bindings, and whether a material with an
+   unresolvable reference is an error or a documented fallback to `<pbr>`. The second is
+   a product decision about visual failure, not a grammar decision.
 
 ## 20. Reference samples
 

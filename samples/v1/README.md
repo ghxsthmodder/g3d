@@ -11,8 +11,9 @@ instead of prose. Read it together with [docs/FORMAT.md](../../docs/FORMAT.md)
 | Block | Element | Where |
 |---|---|---|
 | Metadata | `<metadata>` with `createdAt` in ISO-8601 and `<license src>` | top of file |
-| Textures | `<asset type="texture">` pointing at `.ktx2` only | `<assets>` |
+| Textures | `<asset type="texture">` pointing at `.ktx2` only; `kind` omitted, so `2d` | `<assets>` |
 | Variants | `<textureSet>` with ASTC / ETC2 / RGBA8 candidates and a mandatory `default` | `<assets>` |
+| Atlas array | `<asset kind="2dArray">` sampled through `<texture layer="1">` | `<assets>`, `<materials>` |
 | Skin | `<skeleton>`, `<joint parent>`, `<inverseBindMatrices>`, `<skin>/<bind>` | `<skeletons>` |
 | Binary pool | `<pool>`, `<buffer>`, `<bufferView>`, `view=` + `byteOffset=` streams | `<mesh>` |
 | Interleaving | one view with `byteStride="36"` shared by seven streams | `geometry/body` |
@@ -20,7 +21,7 @@ instead of prose. Read it together with [docs/FORMAT.md](../../docs/FORMAT.md)
 | Quantization | `uint16` positions with affine `<quantization>` | `geometry/body` |
 | Normalisation | `int8` normals/tangents, `uint16` UVs and weights | both geometries |
 | Morph | `<morph>` with three dense targets on a 128-vertex geometry | `geometry/face` |
-| Texture slots | `<texture assetId texCoord colorspace channel…>`, `<transform>`, `strength`, `scale` | `<materials>` |
+| Texture slots | `<texture assetId texCoord layer colorspace channel…>`, `<transform>`, `strength`, `scale` | `<materials>` |
 | Alpha | `alphaMode`, `premultiplied`, `doubleSided` | `<material>` |
 | Camera | `<camera type="perspective">` attached to a node | `<cameras>`, `<scene>` |
 | Light | `<light type="spot">` with cone angles and range | `<lights>`, `<scene>` |
@@ -45,7 +46,8 @@ Referenced but **not** in the repository yet:
 
 - `character.bin` — the 21 248-byte pool described below.
 - `textures/*.ktx2` — eight KTX2 images (three albedo variants, two ORM, one
-  normal, two emissive).
+  normal, two emissive). The two emissive files are `kind="2dArray"` and must carry the
+  same `layerCount` (§8.3 rules 5 and 6); the other six are `2d`.
 
 These are deliberately absent. Fabricating them would mean writing a packer and
 a KTX2 encoder, which is the next step of the project, not this one; a placeholder
@@ -155,6 +157,8 @@ same data as `float32`.
 | exactly one `default="true"` per set | all four sets |
 | `colorspace` agrees with the variant's `vkFormat` | srgb slots → `*_SRGB*`, linear slots → `*_UNORM*` |
 | no orphan `<asset>` | 8 assets, each named by some `<image assetId>` |
+| `layer` requires `kind="2dArray"` | one `layer="1"`, on the emissive slot, whose two assets are arrays |
+| `layer < layerCount` | checkable only once the two emissive `.ktx2` exist; `layerCount` must be ≥ 2 |
 | index range | values in `[0, 256)` for body, `[0, 128)` for face |
 | index count divisible by 3, at least 3 | 600 and 900 |
 
@@ -167,7 +171,8 @@ and uniqueness per category, and the `geometry`/`material`/`ref`/`assetId`/
 - that `character.bin` and the `.ktx2` files exist, or that the pool arithmetic
   and alignments hold;
 - the KTX2 header rules (`supercompressionScheme = NONE`, native `vkFormat`,
-  DFD consistency) and the variant-set cross-checks;
+  DFD consistency), the `kind` vs header-topology and `layer` vs `layerCount`
+  agreement, and the variant-set cross-checks;
 - `byteOffset`/`byteLength` containment, `byteStride` divisibility, component
   size alignment, `count` × size vs `byteLength`;
 - stream counts equal to `positions.count`, index ranges, weight sums, quaternion
