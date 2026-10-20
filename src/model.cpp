@@ -116,7 +116,8 @@ Document parse(std::string_view xml, std::filesystem::path source_path) {
     struct Reference { std::string id; std::string kind; std::size_t line; };
     std::vector<Reference> references;
     std::set<std::string> sections;
-    const std::vector<std::string> section_order = {"metadata","assets","mesh","materials","animations","collisions","scene"};
+    const std::vector<std::string> section_order = {"metadata","assets","skeletons","mesh","materials",
+                                                    "cameras","lights","animations","collisions","scene"};
     int last_section = -1;
     bool root_seen = false, root_closed = false, scene_seen = false;
     std::size_t line = 1, i = 0;
@@ -229,8 +230,17 @@ Document parse(std::string_view xml, std::filesystem::path source_path) {
                     asset.relative_path = rp->second != "false" && rp->second != "0";
                 doc.assets.push_back(std::move(asset));
             }
+            if (tag.name == "textureSet") {
+                // A set shares the texture ID category: material slots reference
+                // the set, not an individual codec variant.
+                const auto id = tag.attrs.find("id");
+                if (id == tag.attrs.end() || id->second.empty()) diagnostic(doc, line, "<textureSet> requires a non-empty id");
+                else if (!asset_ids.insert(id->second).second) diagnostic(doc, line, "duplicate asset id: " + id->second);
+            }
             if (tag.name == "mesh" || tag.name == "animations" || tag.name == "collisions" ||
-                tag.name == "materials" || tag.name == "assets") {
+                tag.name == "materials" || tag.name == "assets" || tag.name == "skeletons" ||
+                tag.name == "cameras" || tag.name == "lights" ||
+                tag.name == "pool" || tag.name == "license") {
                 if (auto ext = tag.attrs.find("src"); ext != tag.attrs.end()) doc.external_files.push_back(ext->second);
             }
             if (tag.name == "geometry") {
@@ -264,7 +274,7 @@ Document parse(std::string_view xml, std::filesystem::path source_path) {
             }
             if (tag.name == "channel") {
                 auto ref = tag.attrs.find("target");
-                if (ref != tag.attrs.end()) references.push_back({ref->second, "node", line});
+                if (ref != tag.attrs.end()) references.push_back({ref->second, "target", line});
             }
             if (tag.name == "body") {
                 auto ref = tag.attrs.find("node");
@@ -289,6 +299,7 @@ Document parse(std::string_view xml, std::filesystem::path source_path) {
         else if (ref.kind == "material") found = material_ids.contains(ref.id);
         else if (ref.kind == "primitive") found = primitive_ids.contains(ref.id);
         else if (ref.kind == "node") found = node_ids.contains(ref.id);
+        else if (ref.kind == "target") found = node_ids.contains(ref.id) || primitive_ids.contains(ref.id);
         if (!found) diagnostic(doc, ref.line, "reference points to unknown " + ref.kind + " id: " + ref.id);
     }
     return doc;

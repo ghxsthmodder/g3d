@@ -21,6 +21,8 @@ if(G3D_BUILD_TESTS)
     enable_testing()
     add_executable(g3d-tests tests/test_model.cpp)
     target_link_libraries(g3d-tests PRIVATE G3D::g3d)
+    target_compile_definitions(g3d-tests PRIVATE
+        G3D_SAMPLES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/samples")
     add_test(NAME g3d-smoke COMMAND g3d-tests)
 endif()
 
