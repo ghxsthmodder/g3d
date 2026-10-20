@@ -22,7 +22,8 @@ Two roles are defined, because "valid" means different things to each:
 | **conforming reader** | reject every error it can detect with bounded resources; never allocate from an unchecked count; never fetch a URL; never execute content |
 | **conforming writer** | produce documents that satisfy every rule, including the warnings; publish only via the pool and `.g3dp` (§10, BINARY.md §9) |
 
-The reference parser in this repository implements neither role in full; §19 states
+The reference implementation in this repository — parser and validator together —
+implements neither role in full; §19 states
 precisely what it does. A document that parses cleanly there is not a conforming
 document.
 
@@ -509,6 +510,13 @@ selection `channel`, `channelG`, `channelB` (`channelA` also). The packing conve
 an existing toolchain interoperates without a converter, and `channel*=` exists for
 engines that want a different layout.
 
+**What `channel*=` accepts is not defined.** This draft shows letters (`channel="r"`) in
+the occlusion slot and semantic names (`channelG="roughness"`) in the metallic-roughness
+slot, and `samples/v1/character.g3d` uses both, so the reference validator checks neither
+(§19, open item 2). Picking one grammar — letters, names, or a documented union of the two
+— is a spec decision; guessing it in code would silently reject documents the format
+permits.
+
 **Atlas arrays.** `layer` samples one slice of a `kind="2dArray"` image, so a family of
 related surfaces becomes one allocation, one sampler binding, one mip chain, and a
 choice of appearance reduced to a non-negative integer. In `samples/v1/character.g3d` the
@@ -728,32 +736,76 @@ Security requirements, stated as imperatives because a parser tends to forget th
   "inflate bomb" is not a KTX2 concern — but a `.g3dp` that later grows compression via
   `flags` bit 0 inherits it, and the cap must be designed in then, not added after.
 
-## 19. What the reference parser implements today
+## 19. What the reference implementation checks today
 
-`src/model.cpp` checks: root element and version, tag balance and entity syntax,
-top-level section names, order and duplication against §2, required `scene`, id presence
-and per-category uniqueness for `asset`/`textureSet`/`geometry`/`primitive`/`material`/
-`node`, and reference resolution for `primitive/@geometry`, `primitive/@material`,
-`node/mesh/@ref`, `channel/@target` (nodes **or** primitives), `body/@node`, and
-`assetId` from `<texture>` and `<image>`. It records section `@src` paths without
-loading them.
+`src/model.cpp` collects the document and rejects what a tokenizer and a schema can see:
+root element and version, tag balance, entity syntax, DOCTYPE and processing instructions,
+`>` inside a quoted attribute value, the 8 MiB and depth-64 ceilings, top-level section
+names, order and duplication against §2, presence and non-emptiness of `scene`, id
+presence for every element that declares one, and reference resolution against every
+category of the §2 table — `asset`, `skeleton`, `skin`, `joint`, `geometry`, `buffer`,
+`bufferView`, `primitive`, `material`, `camera`, `light`, `sampler`, `node`, plus
+`channel/@target` resolving against nodes **or** primitives. It records section `@src`
+paths without loading them.
+
+`src/validate.cpp` then applies the rules that need no bytes, in this order:
+
+- **id shape** (§2): `[A-Za-z_][A-Za-z0-9_.-]*` — an id that needs quoting is an id that
+  cannot be addressed by `skeleton/@nodes` or the `when` grammar;
+- **numbers** (§6): format, finiteness, whitespace-separated arrays, and in ASCII mode
+  `count × components` against the number of values actually written (§10);
+- **domains** (§8–§15): `componentType` against the per-stream table, `kind`,
+  `colorspace`, `alphaMode`, `topology`, `bufferView/@target`, `<bind mode>`, `@workflow`,
+  `channel/@property`, `<shape type>`, `body/@type`, `asset/@type`, light and camera types;
+- **textures** (§8): `VK_FORMAT_*` token shape, the closed `when` grammar of §8.4 parsed
+  token by token, exactly one `default="true"` per set, ≤ 8 members per set, every
+  `<image assetId>` pointing at a texture asset, the §8.2 authority rule (stating
+  `width`/`height`/`depth`/`format`/`srgb`/`layers`/`levelCount` on an `<asset>` is an
+  error), `layer` only against `kind="2dArray"`, and `colorspace` cross-checked against
+  each variant's `vkFormat`;
+- **geometry** (§10–§11): one `positions` and one `indices` per geometry, optional streams
+  at most once, equal vertex `count`s, counts ≥ 3, `indices.count` divisible by 3, dense
+  morph arithmetic (`targetPositions.count == morph/@count × positions.count`), `≤ 8`
+  targets, and the normalisation rules of the stream table;
+- **pool** (BINARY.md §3–§7): every sum in 64-bit checked arithmetic, stream spans inside
+  their view, views inside their buffer, `buffer/@align` a power of two satisfied by its
+  own `@byteOffset`, view start on a multiple of 4 — **of 16 for `elementArrayBuffer`** —
+  measured from the pool start, `byteStride` a multiple of 4, a stream either text or view
+  and never both, and a component that does not start on its own boundary reported as a
+  **warning** (§4) rather than an error;
+- **quantization** (BINARY.md §6): four attributes of three numbers each, `min == offset`,
+  `max == offset + scale` within tolerance, unsigned types only;
+- **skeletons** (§9): `@nodes` ⇔ `<joint>` agreement in both directions, single root,
+  cycle-free parent chain, `inverseBindMatrices.count == joints` and `float32`,
+  `maxInfluences ∈ {1,2,4}`, `uint8` joints against 256 joints, skin present ⇔ skin
+  streams present;
+- **materials, cameras, lights, animations, collisions** (§12–§15): scalar ranges
+  (0..1 colours and factors, `emissive.strength ≥ 0`), `alphaMode="mask"` ⇔ `alphaCutoff`,
+  the required-and-mutually-exclusive field sets of each camera and light type,
+  `innerConeAngle ≤ outerConeAngle ≤ π/2`, `input.count == output.count`, `duration > 0`,
+  `channel/@property` valid for the category of its target, and the shape parameter
+  arithmetic (`extent` three positive numbers, `staticTriangleMesh` on a static body);
+- **scene** (§4, §16): exactly one root node, one `<camera>` per node, `translation`/`scale`
+  three numbers, `rotation` four and normalised to `1e-4`, no zero scale component;
+- **limits** (§17): each ceiling above is enforced, not merely printed.
 
 It does **not** yet check — and a clean `g3d-tool validate` run therefore proves none
 of this:
 
-- numeric semantics: array lengths vs `count`, index ranges, quaternion and normal
-  norms, weight sums, quantization `min`/`max` agreement, §17 limits;
-- pool semantics: existence and size of `pool/@src`, offsets, containment, alignment,
-  `byteStride` divisibility, `componentType` domain, view resolution;
-- KTX2: file existence, header rules of §8.3, variant-set cross-checks, `colorspace`
-  vs `vkFormat`, `kind` agreement and `layer` bounds against `layerCount`;
-- reference categories it does not model yet: `buffer`, `bufferView`, `skeleton`,
-  `skin`, `camera`, `light`, `sampler`, `animation`, morph `target`;
-- structure: scene-root cardinality, node depth, joint graph shape and cycle-freedom,
-  joints-are-nodes agreement, path containment (§5), extension prefix rules (§3);
-- value domains: `alphaMode`, `colorspace`, `componentType`, `topology`, `kind`,
-  `when` DSL syntax;
-- `.g3dp`: nothing. There is no reader, no writer, and no packer in this repository.
+- **bytes of any kind**: the pool file's existence and size against `pool/@byteLength`,
+  zero-filled padding, index values inside `[0, positions.count)`, per-vertex weight sums,
+  unit normals, `tangent.w ∈ {−1, +1}`, and the decoded range of a quantized stream;
+- **KTX2 payloads**: all six header rules of §8.3, `layerCount` against a `layer` index,
+  and the rule-6 agreement of dimensions, layers, faces and levels across a `textureSet`;
+- **`.g3dp`**: nothing. There is no reader, no writer and no packer in this repository;
+- **§3 extensions**: the prefix rules, and therefore the rejection of an unknown
+  non-namespaced element or attribute name. Today an unrecognised nested name is ignored,
+  which also means a misspelled `componenttype=` is not caught by being unknown — only by
+  being absent;
+- **§5 path containment**: `src` strings are recorded and used as identifiers, not
+  resolved, so `..`, absolute paths and URLs are not yet refused;
+- **runtime selection**: whether a `when` condition is satisfiable on a real device, and
+  how `prefer` breaks ties between satisfied variants.
 
 The same list is mirrored in `samples/v1/README.md`, so a reader validating the
 canonical sample cannot mistake a structural pass for semantic conformance.
@@ -763,14 +815,21 @@ canonical sample cannot mistake a structural pass for semantic conformance.
 1. The KTX2 identifier, `supercompressionScheme` values and header field order are now
    fixed in §8.3. What remains unverified is the `typeSize` rule for block-compressed
    formats, which a validator reads from the KTX2 specification until it is confirmed.
-2. The §17 limit numbers — proposed, awaiting confirmation.
-3. `scheme/model.g3d.sch` — empty. Either it becomes a structure-only Relax NG schema
+2. `channel`, `channelG`, `channelB`, `channelA` (§12) have no defined value grammar.
+   §12 shows letters (`channel="r"`) in one slot and semantic names
+   (`channelG="roughness"`) in another, and the canonical sample uses both. Until the
+   grammar is fixed — letters, names, or a documented union — a validator cannot check
+   the attribute at all, and the reference implementation deliberately does not guess.
+   A guess here silently changes which channel a material reads.
+3. The §17 limit numbers — proposed, awaiting confirmation. They are enforced as written,
+   so confirming them is a one-line change per ceiling and not a redesign.
+4. `scheme/model.g3d.sch` — empty. Either it becomes a structure-only Relax NG schema
    beside the semantic C++ validator, or it is removed and the repository admits there
    is no declarative schema for v1.0. Both are defensible; an empty file is not.
-4. Basis Universal and supercompression (§8.3) stay prohibited until a target device
+5. Basis Universal and supercompression (§8.3) stay prohibited until a target device
    population makes transcoding cheaper than variant shipping — that is a measurement,
    not a decision anyone in this repository has made.
-5. A shader **reference** (§8.1, §12) as `extensionsRequired` content: needed by terrain
+6. A shader **reference** (§8.1, §12) as `extensionsRequired` content: needed by terrain
    splatmapping, deferred by everything else. Before it can be drafted, two questions
    have answers the repository does not yet have — whether the reference names one
    program per API (GLES GLSL and Vulkan SPIR-V are not interchangeable on the Android

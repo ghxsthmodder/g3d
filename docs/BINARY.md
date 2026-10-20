@@ -69,11 +69,16 @@ way a pool validator reads past the end of a mapping.
 | rule | value | applies to |
 |---|---|---|
 | `componentSize` divides the component's own offset | 1, 2, 4 | every stream |
-| `bufferView/@byteOffset` | multiple of 4 | all views |
-| `bufferView/@byteOffset` | multiple of 16 | a view whose `@target` is `elementArrayBuffer` |
-| `buffer/@byteOffset` | multiple of 256 | a view used as texel/storage image data |
+| view start in the pool | multiple of 4 | all views |
+| view start in the pool | multiple of 16 | a view whose `@target` is `elementArrayBuffer` |
+| `buffer/@byteOffset` | multiple of 256 | a buffer holding texel or storage-image data |
 | `buffer/@byteOffset` inside a `.g3dp` | multiple of 4096 | the pool entry (page boundary, for copy-free `mmap`) |
 | `byteStride`, when non-zero | multiple of 4 | interleaved views |
+
+"View start in the pool" is `buffer/@byteOffset + bufferView/@byteOffset`, not the
+`bufferView/@byteOffset` alone: §3 makes that attribute relative to its buffer, and a
+reader pointer-casts at the absolute byte. `bufferView/@target` is optional and absent
+means `arrayBuffer`; `buffer/@align` is optional and absent means 1.
 
 `buffer/@align` records the strictest alignment a buffer needs, so a packer can lay
 out buffers without knowing which views will land inside them. It **must** be a power

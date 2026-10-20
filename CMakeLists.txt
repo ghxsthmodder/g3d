@@ -4,7 +4,7 @@ project(G3D VERSION 0.1.0 LANGUAGES CXX)
 option(G3D_BUILD_TOOLS "Build G3D command-line tools" ON)
 option(G3D_BUILD_TESTS "Build G3D tests" ON)
 
-add_library(g3d STATIC src/model.cpp)
+add_library(g3d STATIC src/model.cpp src/validate.cpp)
 add_library(G3D::g3d ALIAS g3d)
 target_include_directories(g3d PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

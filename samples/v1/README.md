@@ -65,7 +65,7 @@ inside `byteStride` when the view is interleaved). Absolute offset of one elemen
 of a stream is therefore:
 
 ```
-pool.buffer.byteOffset + view.byteOffset + stream.byteOffset + index * view.byteStride
+pool.buffer.byteOffset + view.byteOffset + stream.byteOffset + index * (view.byteStride ? view.byteStride : elementSize)
 ```
 
 ### Buffers
@@ -162,28 +162,45 @@ same data as `float32`.
 | index range | values in `[0, 256)` for body, `[0, 128)` for face |
 | index count divisible by 3, at least 3 | 600 and 900 |
 
-## What `g3d-tool validate` does **not** check yet
+## What `g3d-tool validate` checks, and what it cannot
 
-A clean `validate` run on this file proves the root, section order, ID presence
-and uniqueness per category, and the `geometry`/`material`/`ref`/`assetId`/
-`channel target` references resolve. It does **not** yet check:
+A clean run on this file proves the rules that are visible in the document alone:
 
-- that `character.bin` and the `.ktx2` files exist, or that the pool arithmetic
-  and alignments hold;
-- the KTX2 header rules (`supercompressionScheme = NONE`, native `vkFormat`,
-  DFD consistency), the `kind` vs header-topology and `layer` vs `layerCount`
-  agreement, and the variant-set cross-checks;
-- `byteOffset`/`byteLength` containment, `byteStride` divisibility, component
-  size alignment, `count` × size vs `byteLength`;
-- stream counts equal to `positions.count`, index ranges, weight sums, quaternion
-  norms, quantization min/max agreement;
-- scene-root cardinality, hierarchy cycles, path containment, `<joint>` tree
-  shape, `skin`/`skeleton`/`camera`/`light`/`view` references;
-- `alphaMode`/`colorspace`/`componentType` value domains.
+- root, version, section names and order, id shape and per-category uniqueness, and
+  **every** reference of the §2 table — `buffer`, `bufferView`, `skeleton`, `skin`,
+  `joint`, `camera`, `light`, `sampler`, morph `target` included;
+- the pool arithmetic of [BINARY.md](../../docs/BINARY.md) §3–§7: every stream span
+  inside its view, every view inside its buffer, all sums overflow-checked, view starts
+  on a multiple of 4 (16 for `elementArrayBuffer`) measured from the pool start,
+  `byteStride` a multiple of 4, a stream either text or view and never both;
+- the §10 stream table: `componentType` per stream, normalisation, `count` equality with
+  `positions.count`, dense morph arithmetic, and quantization `min`/`max` agreement;
+- the §9 skeleton rules: `@nodes` ⇔ `<joint>` in both directions, single root,
+  cycle-free parents, `inverseBindMatrices.count == joints`, `maxInfluences`,
+  `skin` ⇔ skin streams;
+- §12–§16 value domains and ranges — `alphaMode`, `colorspace`, `kind`, `topology`,
+  `@target`, `@workflow`, camera and light field sets, cone ordering — plus
+  `colorspace` cross-checked against each variant's `vkFormat`, `layer` against
+  `kind="2dArray"`, `when` parsed against the §8.4 grammar, exactly one `default` per
+  set, quaternion norms and non-zero scales;
+- every §17 ceiling.
 
-Those are the semantics the parser has to grow into; §19 of
-[docs/FORMAT.md](../../docs/FORMAT.md) keeps the same list, and it is the parser's
-gap — not the sample's — that these bullets describe.
+It does **not** check, because these need bytes that are not in this repository:
+
+- that `character.bin` and the eight `.ktx2` files exist, that the pool is exactly
+  21 248 bytes, and that the padding bytes are zero-filled;
+- index values inside `[0, positions.count)`, per-vertex `weights0` sums, unit normals,
+  `tangent.w ∈ {−1, +1}`, and the decoded range of the quantized positions;
+- the KTX2 header rules of §8.3, including `supercompressionScheme = NONE`, native
+  `vkFormat`, DFD consistency, `kind` vs header topology and `layer < layerCount`;
+- the rule-6 agreement of dimensions, layers, faces and levels across a `textureSet`;
+- §5 path containment and §3 extension prefixes, which the parser does not enforce yet.
+
+So a passing run here is *not* conformance: it says the document is self-consistent,
+not that its bytes are. [docs/FORMAT.md](../../docs/FORMAT.md) §19 keeps the same two
+lists as the normative statement of coverage, including the open item on the
+`channel*=` value grammar — §12 shows letters in one slot and semantic names in
+another, so no validator can check that attribute until the grammar is fixed.
 
 ## Reproducing the checks
 

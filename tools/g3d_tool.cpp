@@ -7,7 +7,8 @@ namespace {
 void usage() {
     std::cout << "G3D tools 0.1.0\n"
               << "Usage:\n"
-              << "  g3d-tool validate <file.g3d>  Validate basic XML structure and references\n"
+              << "  g3d-tool validate <file.g3d>  Check the rules that need no bytes (FORMAT.md §2–§17,\n"
+              << "                                BINARY.md §3–§7); pool and KTX2 bytes are not read\n"
               << "  g3d-tool inspect <file.g3d>   Print document summary\n"
               << "  g3d-tool --help               Show this help\n";
 }
@@ -44,6 +45,6 @@ int main(int argc, char** argv) {
     }
 
     if (!doc.valid()) return 1;
-    if (command == "validate") std::cout << "Valid G3D structure: " << argv[2] << '\n';
+    if (command == "validate") std::cout << "Valid G3D document: " << argv[2] << '\n';
     return 0;
 }
