@@ -5,7 +5,7 @@
     <geometry id="geom">
       <positions count="3">0 0 1 1 0 -1 -1 0 -1</positions>
       <normals count="3">0 1 0 0 1 0 0 1 0</normals>
-      <uv0 count="3">0.5 0 1 1 0 1</uv0>
+      <uv0 count="3">0.5 1 1 0 0 0</uv0>
       <indices count="3" topology="triangles">0 1 2</indices>
     </geometry>
     <primitive id="primitive" geometry="geom" material="mat_default"/>

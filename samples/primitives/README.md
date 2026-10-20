@@ -15,6 +15,9 @@ These self-contained XML samples target the proposed G3D v1.0 format (root eleme
 
 - Right-handed coordinates: +Y is up; +Z is forward.
 - Distances are in meters.
+- UV origin is **top-left**, with +V pointing down, matching the v1.0 canonical
+  image orientation. `v' = 1 - v` is the flip from the bottom-up convention used
+  by OpenGL textures.
 - Geometry uses a shared index stream for positions, normals, and UV0.
 - `count` counts entries (vertices for vertex streams; scalar indices for `indices`), not individual numeric components.
 - Polygon topology is triangles; face winding is counter-clockwise when viewed from the front.
@@ -22,4 +25,11 @@ These self-contained XML samples target the proposed G3D v1.0 format (root eleme
 
 ## Compatibility note
 
-These are reference examples for the evolving v1.0 specification. The repository's experimental C++ parser currently targets an earlier `<model>`-root draft and is not expected to validate these `<g3d>` documents until that parser is updated to the finalized specification.
+These samples are self-contained authoring documents: ASCII coordinate arrays, no
+`<pool>`, no sidecar `.bin` and no `.ktx2`. That is the authoring mode of v1.0 and it
+stays valid — a published package is what has to move to the binary pool and KTX2.
+
+The repository parser validates them (`g3d-tool validate`). It checks structure —
+root, version, section order, IDs and reference resolution — not semantics: it does
+not verify that `uv0` has as many entries as `positions`, that indices stay inside
+the vertex range, or that the UVs follow the top-left origin above.
