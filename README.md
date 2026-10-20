@@ -31,9 +31,11 @@ The parser checks the root/version, basic tag and entity syntax, key asset field
 - `tools/g3d_tool.cpp` — CLI
 - `tests/` — parser smoke tests
 - `docs/FORMAT.md` — draft specification
+- `docs/BINARY.md` — binary pool (`.bin`) and package envelope (`.g3dp`) layout
+- `samples/v1/` — canonical v1.0 sample exercising every core section
 - `samples/primitives/` — Triangle, Square, Sphere, Cylinder, Torus, and Flat Plane
 
-See [docs/FORMAT.md](docs/FORMAT.md) for coordinates, geometry streams, materials, animation, collision, references, and auxiliary-file rules. Binary sidecar layouts are not stable yet.
+See [docs/FORMAT.md](docs/FORMAT.md) for coordinates, geometry streams, materials, animation, collision, references, and auxiliary-file rules, and [docs/BINARY.md](docs/BINARY.md) for the byte-level pool and package layouts.
 
 ## Versioning
 
