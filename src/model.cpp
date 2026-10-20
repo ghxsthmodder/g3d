@@ -114,7 +114,7 @@ Document parse(std::string_view xml, std::filesystem::path source_path) {
     std::vector<std::pair<std::string, std::size_t>> stack;
     std::set<std::string> asset_ids;
     std::vector<std::pair<std::string, std::size_t>> references;
-    bool root_seen = false, root_closed = false;
+    bool root_seen = false, root_closed = false, scene_seen = false;
     std::size_t line = 1, i = 0;
 
     while (i < xml.size()) {
@@ -146,7 +146,8 @@ Document parse(std::string_view xml, std::filesystem::path source_path) {
             const auto end = xml.find("?>", i + 2);
             if (end == std::string_view::npos) { diagnostic(doc, line, "unterminated processing instruction"); break; }
             auto pi = xml.substr(i + 2, end - i - 2);
-            if (pi.starts_with("g3d") && (pi.size() == 3 || std::isspace(static_cast<unsigned char>(pi[3])))) {
+            if (!pi.starts_with("xml") || (pi.size() > 3 && !std::isspace(static_cast<unsigned char>(pi[3])))) {
+                diagnostic(doc, line, "processing instructions are not supported in G3D v1.0");
                 const auto v = pi.find("version=");
                 if (v != std::string_view::npos) {
                     auto q = pi.find_first_of("\"'", v + 8);
@@ -186,30 +187,42 @@ Document parse(std::string_view xml, std::filesystem::path source_path) {
             } else stack.pop_back();
             if (stack.empty() && root_seen) root_closed = true;
         } else {
+            const bool is_root = !root_seen;
             if (!root_seen) {
                 root_seen = true;
-                if (tag.name != "model") diagnostic(doc, line, "root element must be <model>");
+                if (tag.name != "g3d") diagnostic(doc, line, "root element must be <g3d>");
+                auto v = tag.attrs.find("version");
+                if (v == tag.attrs.end() || v->second.empty()) diagnostic(doc, line, "<g3d> requires version=\"1.0\"");
+                else if (v->second != "1.0") diagnostic(doc, line, "unsupported G3D version: " + v->second);
+                else doc.version = v->second;
             } else if (root_closed || stack.empty()) {
                 diagnostic(doc, line, "multiple root elements");
+            }
+            if (!is_root && stack.size() == 1) {
+                if (tag.name == "scene") scene_seen = true;
+                const std::vector<std::string> allowed = {"metadata","assets","mesh","materials","animations","collisions","scene"};
+                if (std::find(allowed.begin(), allowed.end(), tag.name) == allowed.end())
+                    diagnostic(doc, line, "unknown top-level section: " + tag.name);
             }
             if (tag.name == "asset") {
                 const auto id = tag.attrs.find("id");
                 const auto type = tag.attrs.find("type");
+                const auto src = tag.attrs.find("src");
                 if (id == tag.attrs.end() || id->second.empty()) diagnostic(doc, line, "<asset> requires a non-empty id");
                 else if (!asset_ids.insert(id->second).second) diagnostic(doc, line, "duplicate asset id: " + id->second);
-                if (type == tag.attrs.end() || type->second.empty()) diagnostic(doc, line, "<asset> requires a type");
+                if (type == tag.attrs.end() || type->second != "texture") diagnostic(doc, line, "<asset> type must be texture in v1.0");
+                if (src == tag.attrs.end() || src->second.empty()) diagnostic(doc, line, "<asset> requires src");
                 Asset asset;
                 if (id != tag.attrs.end()) asset.id = id->second;
                 if (type != tag.attrs.end()) asset.type = type->second;
-                if (auto f = tag.attrs.find("file"); f != tag.attrs.end()) asset.file = f->second;
+                if (src != tag.attrs.end()) asset.file = src->second;
                 if (auto rp = tag.attrs.find("relativePath"); rp != tag.attrs.end())
                     asset.relative_path = rp->second != "false" && rp->second != "0";
                 doc.assets.push_back(std::move(asset));
             }
             if (tag.name == "mesh" || tag.name == "animations" || tag.name == "collisions" ||
                 tag.name == "materials" || tag.name == "assets") {
-                if (auto ext = tag.attrs.find("externalFile"); ext != tag.attrs.end())
-                    doc.external_files.push_back(ext->second);
+                if (auto ext = tag.attrs.find("src"); ext != tag.attrs.end()) doc.external_files.push_back(ext->second);
             }
             if (auto ref = tag.attrs.find("assetId"); ref != tag.attrs.end())
                 references.emplace_back(ref->second, line);
@@ -222,10 +235,9 @@ Document parse(std::string_view xml, std::filesystem::path source_path) {
 
     if (!root_seen) diagnostic(doc, 1, "document has no root element");
     if (!stack.empty()) diagnostic(doc, stack.back().second, "unclosed tag: " + stack.back().first);
+    if (!scene_seen) diagnostic(doc, 1, "required <scene> section is missing");
     for (const auto& [id, ref_line] : references)
         if (!asset_ids.contains(id)) diagnostic(doc, ref_line, "reference points to unknown asset id: " + id);
-    if (doc.version.empty())
-        diagnostic(doc, 1, "missing G3D processing instruction version", Diagnostic::Severity::warning);
     return doc;
 }
 
