@@ -256,13 +256,31 @@ ETC2 and RGBA8 variants of every texture is larger than one Basis file. On a dev
 that reports ASTC support — which is the Android target — larger-but-direct beats
 smaller-but-deferred.
 
-**Unverified constants.** The numeric value of `supercompressionScheme = NONE`, the
-block-format `typeSize` rule and the `VK_FORMAT_*` enum numbers are **not** fixed in
-this document, because they could not be confirmed against the Khronos registry during
-drafting. Until they are, examples use symbolic names and a validator reads them from
-the KTX2 specification. Publishing integers that have not been checked against the
-source is exactly the sort of error that enters a spec and never leaves. This is
-tracked as an open item, not a decision.
+**Verified constants.** From the KTX 2.0 specification:
+
+| item | value |
+|---|---|
+| file identifier | `AB 4B 54 58 20 32 30 BB 0D 0A 1A 0A` (12 bytes) |
+| header layout | `Byte[12] identifier`, then `UInt32 vkFormat`, `typeSize`, `pixelWidth`, `pixelHeight`, … |
+| `supercompressionScheme` | 0 = none, 1 = BasisLZ, 2 = Zstd |
+
+Rule 2 therefore means `supercompressionScheme == 0`, literally, and 1 and 2 are the
+two values a validator will meet in the wild: BasisLZ is what a `.ktx2` produced by
+`toktx --bcmp` carries, and Zstd is what GDAL's UASTC writer defaults to. Both are
+rejected here, so "the file loaded in another engine" is not evidence it is valid G3D.
+
+`vkFormat` is compared as a **name, not a number**. `<image vkFormat>` carries the
+`VK_FORMAT_*` token, and a reader resolves that token against the Vulkan registry it
+already depends on (`vulkan_core.h`, or vk.xml for a validator) rather than against a
+table copied into this document. Embedding the enum numbers would buy nothing — the
+reader needs the Vulkan headers anyway to interpret the value — while guaranteeing that
+this spec silently disagrees with the registry every time a format is added.
+
+Still **not** fixed here: the `typeSize` rule for block-compressed formats, which the
+KTX2 specification states and this draft has not re-verified. A validator takes it from
+the KTX2 spec directly. Publishing an integer that has not been checked against its
+source is the sort of error that enters a spec and never leaves, which is why the gap is
+named instead of guessed.
 
 ### 8.4 Variants per device profile
 
@@ -673,7 +691,9 @@ canonical sample cannot mistake a structural pass for semantic conformance.
 
 **Open items carried by this draft**, in order of blocking power:
 
-1. KTX2 and Vulkan numeric constants (§8.3) — unverified at drafting time.
+1. The KTX2 identifier, `supercompressionScheme` values and header field order are now
+   fixed in §8.3. What remains unverified is the `typeSize` rule for block-compressed
+   formats, which a validator reads from the KTX2 specification until it is confirmed.
 2. The §17 limit numbers — proposed, awaiting confirmation.
 3. `scheme/model.g3d.sch` — empty. Either it becomes a structure-only Relax NG schema
    beside the semantic C++ validator, or it is removed and the repository admits there
