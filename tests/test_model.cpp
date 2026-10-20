@@ -1,30 +1,14 @@
 #include "g3d/model.hpp"
-
 #include <cassert>
 #include <string>
-
 int main() {
-    const std::string valid = R"(<?g3d version="1.0.0" encoding="utf-8"?>
-<model>
-  <assets><asset id="1" type="texture" file="albedo.png"/></assets>
-  <materials><material id="0"><diffuse assetId="1"/></material></materials>
-  <mesh externalFile="mesh.g3dmesh"/>
-</model>)";
-    const auto doc = g3d::parse(valid);
-    assert(doc.valid());
-    assert(doc.version == "1.0.0");
-    assert(doc.assets.size() == 1);
-    assert(doc.external_files.size() == 1);
-
-    const std::string duplicate = R"(<model><assets>
-      <asset id="1" type="texture"/><asset id="1" type="shader"/>
-    </assets></model>)";
-    assert(!g3d::parse(duplicate).valid());
-
-    const std::string missing_ref = R"(<model><materials><material><diffuse assetId="404"/></material></materials></model>)";
-    assert(!g3d::parse(missing_ref).valid());
-
-    const std::string malformed = R"(<model><assets></model>)";
-    assert(!g3d::parse(malformed).valid());
-    return 0;
+ const std::string good=R"(<g3d version="1.0"><mesh><geometry id="g"/><primitive id="p" geometry="g" material="m"/></mesh><materials><material id="m"/></materials><scene><node id="root"><mesh ref="p"/></node></scene></g3d>)";
+ auto d=g3d::parse(good); assert(d.valid()); assert(d.version=="1.0");
+ assert(!g3d::parse(R"(<g3d version="2.0"><scene><node id="root"/></scene></g3d>)").valid());
+ assert(!g3d::parse(R"(<g3d><scene><node id="root"/></scene></g3d>)").valid());
+ assert(!g3d::parse(R"(<g3d version="1.0"><metadata/></g3d>)").valid());
+ assert(!g3d::parse(R"(<g3d version="1.0"><scene></g3d>)").valid());
+ const std::string dup=R"(<g3d version="1.0"><assets><asset id="x" type="texture" src="a.png"/><asset id="x" type="texture" src="b.png"/></assets><scene><node id="root"/></scene></g3d>)";
+ assert(!g3d::parse(dup).valid());
+ return 0;
 }
