@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<g3d version="1.0">
+  <metadata><title>Flat Plane (Is Flat)</title><author>G3D Reference Samples</author></metadata>
+  <mesh>
+    <geometry id="geom">
+      <positions count="4">-2 0 -1 -2 0 1 2 0 1 2 0 -1</positions>
+      <normals count="4">0 1 0 0 1 0 0 1 0 0 1 0</normals>
+      <uv0 count="4">0 0 0 1 1 1 1 0</uv0>
+      <indices count="6" topology="triangles">0 1 2 0 2 3</indices>
+    </geometry>
+    <primitive id="primitive" geometry="geom" material="mat_default"/>
+  </mesh>
+  <materials><material id="mat_default" name="Default"><pbr workflow="metallicRoughness"><baseColor r="0.72" g="0.72" b="0.72" a="1"/><metallic value="0"/><roughness value="0.8"/></pbr></material></materials>
+  <scene><node id="root"><mesh ref="primitive"/></node></scene>
+</g3d>
